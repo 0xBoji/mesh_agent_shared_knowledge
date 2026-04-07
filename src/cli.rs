@@ -32,6 +32,15 @@ pub struct ServeConfig {
     /// TCP port to bind and advertise on the local mesh.
     #[arg(long, default_value_t = DEFAULT_PORT)]
     pub port: u16,
+    /// Comma-separated list of file extensions to include (e.g. "rs,md,txt").
+    #[arg(long, value_delimiter = ',', default_value = "rs,md,txt,toml,json")]
+    pub extensions: Vec<String>,
+    /// Maximum number of lines per semantic chunk.
+    #[arg(long, default_value_t = 40)]
+    pub chunk_lines: usize,
+    /// Maximum number of characters per semantic chunk.
+    #[arg(long, default_value_t = 2000)]
+    pub chunk_chars: usize,
 }
 
 #[derive(Debug, Clone, Parser)]

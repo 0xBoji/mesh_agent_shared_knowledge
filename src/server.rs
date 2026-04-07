@@ -12,7 +12,7 @@ use tokio::net::TcpListener;
 use tokio::time;
 
 use crate::cli::{QueryConfig, ServeConfig};
-use crate::indexer::{EmbeddingClient, KnowledgeBase, build_index};
+use crate::indexer::{EmbeddingClient, IndexConfig, KnowledgeBase, build_index};
 use crate::output::{QueryRequest, QueryResult};
 
 #[derive(Clone)]
@@ -31,8 +31,13 @@ impl AppState {
 }
 
 pub async fn serve(config: ServeConfig) -> Result<()> {
+    let index_config = IndexConfig {
+        extensions: config.extensions.clone(),
+        chunk_line_limit: config.chunk_lines,
+        chunk_char_limit: config.chunk_chars,
+    };
     let embedder = EmbeddingClient::new_fastembed().await?;
-    let knowledge_base = build_index(&config.directory, &embedder).await?;
+    let knowledge_base = build_index(&config.directory, &embedder, &index_config).await?;
     let chunk_count = knowledge_base.len();
     let state = AppState::new(knowledge_base, embedder);
     let router = build_router(state);

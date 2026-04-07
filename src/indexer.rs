@@ -8,8 +8,28 @@ use fastembed::{EmbeddingModel, TextEmbedding, TextInitOptions};
 
 use crate::output::QueryResult;
 
-const CHUNK_LINE_LIMIT: usize = 40;
-const CHUNK_CHAR_LIMIT: usize = 2_000;
+#[derive(Debug, Clone)]
+pub struct IndexConfig {
+    pub extensions: Vec<String>,
+    pub chunk_line_limit: usize,
+    pub chunk_char_limit: usize,
+}
+
+impl Default for IndexConfig {
+    fn default() -> Self {
+        Self {
+            extensions: vec![
+                "rs".into(),
+                "md".into(),
+                "txt".into(),
+                "toml".into(),
+                "json".into(),
+            ],
+            chunk_line_limit: 40,
+            chunk_char_limit: 2000,
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Chunk {
@@ -120,17 +140,27 @@ impl EmbeddingClient {
 pub async fn build_index(
     directory: impl Into<PathBuf>,
     embedder: &EmbeddingClient,
+    config: &IndexConfig,
 ) -> Result<KnowledgeBase> {
     let directory = directory.into();
-    let documents = tokio::task::spawn_blocking(move || collect_documents(&directory))
-        .await
-        .map_err(|error| anyhow!("indexing task join error: {error}"))??;
+    let config_clone = config.clone();
+    let documents =
+        tokio::task::spawn_blocking(move || collect_documents(&directory, &config_clone))
+            .await
+            .map_err(|error| anyhow!("indexing task join error: {error}"))??;
 
     // RAG step 1: chunking. We split each text file into smaller semantic units so the
     // retriever can return focused snippets instead of entire files.
     let chunk_inputs = documents
         .into_iter()
-        .flat_map(|document| chunk_document(&document.path, &document.content))
+        .flat_map(|document| {
+            chunk_document(
+                &document.path,
+                &document.content,
+                config.chunk_line_limit,
+                config.chunk_char_limit,
+            )
+        })
         .collect::<Vec<_>>();
 
     if chunk_inputs.is_empty() {
@@ -173,13 +203,17 @@ struct ChunkInput {
     content: String,
 }
 
-fn collect_documents(root: &Path) -> Result<Vec<SourceDocument>> {
+fn collect_documents(root: &Path, config: &IndexConfig) -> Result<Vec<SourceDocument>> {
     let mut documents = Vec::new();
-    walk_directory(root, &mut documents)?;
+    walk_directory(root, &mut documents, config)?;
     Ok(documents)
 }
 
-fn walk_directory(path: &Path, documents: &mut Vec<SourceDocument>) -> Result<()> {
+fn walk_directory(
+    path: &Path,
+    documents: &mut Vec<SourceDocument>,
+    config: &IndexConfig,
+) -> Result<()> {
     for entry in fs::read_dir(path)
         .with_context(|| format!("failed to read directory `{}`", path.display()))?
     {
@@ -190,11 +224,21 @@ fn walk_directory(path: &Path, documents: &mut Vec<SourceDocument>) -> Result<()
             .with_context(|| format!("failed to inspect `{}`", entry_path.display()))?;
 
         if file_type.is_dir() {
-            walk_directory(&entry_path, documents)?;
+            walk_directory(&entry_path, documents, config)?;
             continue;
         }
 
         if !file_type.is_file() {
+            continue;
+        }
+
+        let extension = entry_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_string();
+
+        if !config.extensions.contains(&extension) {
             continue;
         }
 
@@ -223,7 +267,12 @@ fn walk_directory(path: &Path, documents: &mut Vec<SourceDocument>) -> Result<()
     Ok(())
 }
 
-fn chunk_document(path: &Path, content: &str) -> Vec<ChunkInput> {
+fn chunk_document(
+    path: &Path,
+    content: &str,
+    line_limit: usize,
+    char_limit: usize,
+) -> Vec<ChunkInput> {
     let file_path = path.display().to_string();
     let mut chunks = Vec::new();
 
@@ -234,7 +283,7 @@ fn chunk_document(path: &Path, content: &str) -> Vec<ChunkInput> {
         }
 
         let lines = trimmed.lines().collect::<Vec<_>>();
-        let needs_line_split = lines.len() > CHUNK_LINE_LIMIT || trimmed.len() > CHUNK_CHAR_LIMIT;
+        let needs_line_split = lines.len() > line_limit || trimmed.len() > char_limit;
 
         if !needs_line_split {
             chunks.push(ChunkInput {
@@ -244,7 +293,7 @@ fn chunk_document(path: &Path, content: &str) -> Vec<ChunkInput> {
             continue;
         }
 
-        for line_group in lines.chunks(CHUNK_LINE_LIMIT) {
+        for line_group in lines.chunks(line_limit) {
             let grouped = line_group.join("\n");
             let grouped = grouped.trim();
             if grouped.is_empty() {
@@ -295,7 +344,8 @@ mod tests {
     use anyhow::Result;
 
     use super::{
-        Chunk, EmbeddingBackend, EmbeddingClient, KnowledgeBase, build_index, chunk_document,
+        Chunk, EmbeddingBackend, EmbeddingClient, IndexConfig, KnowledgeBase, build_index,
+        chunk_document,
     };
 
     struct FakeBackend;
@@ -323,7 +373,7 @@ mod tests {
                 .collect::<Vec<_>>()
                 .join("\n");
 
-        let chunks = chunk_document(Path::new("src/lib.rs"), &content);
+        let chunks = chunk_document(Path::new("src/lib.rs"), &content, 40, 2000);
 
         assert_eq!(chunks[0].content, "fn a() {}");
         assert_eq!(chunks[1].content, "fn b() {}");
@@ -363,7 +413,8 @@ mod tests {
         std::fs::write(root.join("blob.bin"), [0, 159, 146, 150])?;
 
         let embedder = EmbeddingClient::from_backend(FakeBackend);
-        let knowledge_base = build_index(&root, &embedder).await?;
+        let config = IndexConfig::default();
+        let knowledge_base = build_index(&root, &embedder, &config).await?;
 
         assert!(knowledge_base.len() >= 2);
 
