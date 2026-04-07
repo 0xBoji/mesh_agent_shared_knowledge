@@ -1,4 +1,5 @@
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -9,22 +10,25 @@ use axum::routing::post;
 use axum::{Json, Router};
 use coding_agent_mesh_presence::{AgentInfo, ZeroConfMesh};
 use tokio::net::TcpListener;
+use tokio::sync::RwLock;
 use tokio::time;
 
+use notify::Watcher;
+
 use crate::cli::{QueryConfig, ServeConfig};
-use crate::indexer::{EmbeddingClient, IndexConfig, KnowledgeBase, build_index};
+use crate::indexer::{EmbeddingClient, IndexConfig, KnowledgeBase, build_index, reindex_file};
 use crate::output::{QueryRequest, QueryResult};
 
 #[derive(Clone)]
 struct AppState {
-    knowledge_base: Arc<KnowledgeBase>,
+    knowledge_base: Arc<RwLock<KnowledgeBase>>,
     embedder: EmbeddingClient,
 }
 
 impl AppState {
     fn new(knowledge_base: KnowledgeBase, embedder: EmbeddingClient) -> Self {
         Self {
-            knowledge_base: Arc::new(knowledge_base),
+            knowledge_base: Arc::new(RwLock::new(knowledge_base)),
             embedder,
         }
     }
@@ -38,9 +42,26 @@ pub async fn serve(config: ServeConfig) -> Result<()> {
     };
     let embedder = EmbeddingClient::new_fastembed().await?;
     let knowledge_base = build_index(&config.directory, &embedder, &index_config).await?;
-    let chunk_count = knowledge_base.len();
-    let state = AppState::new(knowledge_base, embedder);
-    let router = build_router(state);
+    let state = AppState::new(knowledge_base, embedder.clone());
+    let kb_lock = state.knowledge_base.read().await;
+    let chunk_count = kb_lock.len();
+    drop(kb_lock);
+
+    let router = build_router(state.clone());
+
+    if config.watch {
+        let watch_dir = config.directory.clone();
+        let state_clone = state.clone();
+        let index_config_clone = index_config.clone();
+        let embedder_clone = embedder.clone();
+        tokio::spawn(async move {
+            if let Err(e) =
+                run_watcher(watch_dir, state_clone, index_config_clone, embedder_clone).await
+            {
+                eprintln!("watcher error: {e}");
+            }
+        });
+    }
 
     let mesh = ZeroConfMesh::builder()
         .agent_id(format!("mask-indexer-{}", config.port))
@@ -120,8 +141,57 @@ async fn query_handler(
         .next()
         .ok_or_else(|| internal_error(anyhow!("embedding model returned no query vector")))?;
 
-    let results = state.knowledge_base.search(&query_embedding, request.top_k);
+    let kb = state.knowledge_base.read().await;
+    let results = kb.search(&query_embedding, request.top_k);
     Ok(Json(results))
+}
+
+async fn run_watcher(
+    directory: PathBuf,
+    state: AppState,
+    config: IndexConfig,
+    embedder: EmbeddingClient,
+) -> Result<()> {
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+
+    let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+        if let Ok(event) = res {
+            let _ = tx.send(event);
+        }
+    })?;
+
+    watcher.watch(&directory, notify::RecursiveMode::Recursive)?;
+
+    while let Some(event) = rx.recv().await {
+        for path in event.paths {
+            let path_str = path.display().to_string();
+
+            match event.kind {
+                notify::EventKind::Remove(_) => {
+                    let mut kb = state.knowledge_base.write().await;
+                    kb.remove_file(&path_str);
+                    eprintln!("Watched file removed: {path_str}");
+                }
+                notify::EventKind::Modify(_)
+                | notify::EventKind::Create(_)
+                | notify::EventKind::Any => {
+                    if path.is_file() {
+                        if let Ok(chunks) = reindex_file(&path, &embedder, &config).await {
+                            let mut kb = state.knowledge_base.write().await;
+                            if chunks.is_empty() {
+                                kb.remove_file(&path_str);
+                            } else {
+                                kb.update_file(&path_str, chunks);
+                                eprintln!("Re-indexed via hot-reload: {path_str}");
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    Ok(())
 }
 
 async fn discover_knowledge_base(wait: Duration) -> Result<String> {

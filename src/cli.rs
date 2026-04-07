@@ -41,6 +41,9 @@ pub struct ServeConfig {
     /// Maximum number of characters per semantic chunk.
     #[arg(long, default_value_t = 2000)]
     pub chunk_chars: usize,
+    /// Enable continuous hot-reloading using file system events.
+    #[arg(long)]
+    pub watch: bool,
 }
 
 #[derive(Debug, Clone, Parser)]

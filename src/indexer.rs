@@ -79,6 +79,15 @@ impl KnowledgeBase {
         ranked.truncate(top_k.min(ranked.len()));
         ranked
     }
+
+    pub fn update_file(&mut self, file_path: &str, new_chunks: Vec<Chunk>) {
+        self.chunks.retain(|chunk| chunk.file_path != file_path);
+        self.chunks.extend(new_chunks);
+    }
+
+    pub fn remove_file(&mut self, file_path: &str) {
+        self.chunks.retain(|chunk| chunk.file_path != file_path);
+    }
 }
 
 pub trait EmbeddingBackend: Send + 'static {
@@ -189,6 +198,79 @@ pub async fn build_index(
         .collect();
 
     Ok(KnowledgeBase::new(chunks))
+}
+
+pub async fn reindex_file(
+    file_path: impl Into<PathBuf>,
+    embedder: &EmbeddingClient,
+    config: &IndexConfig,
+) -> Result<Vec<Chunk>> {
+    let file_path = file_path.into();
+    let config_clone = config.clone();
+
+    let document_opt: Result<Option<SourceDocument>> = tokio::task::spawn_blocking(move || {
+        let extension = file_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_string();
+
+        if !config_clone.extensions.contains(&extension) {
+            return Ok(None);
+        }
+
+        let bytes = fs::read(&file_path)?;
+        if bytes.contains(&0) {
+            return Ok(None);
+        }
+
+        let content = String::from_utf8(bytes).map_err(|_| anyhow!("invalid utf8"))?;
+        if content.trim().is_empty() {
+            return Ok(None);
+        }
+
+        Ok(Some(SourceDocument {
+            path: file_path,
+            content,
+        }))
+    })
+    .await
+    .map_err(|error| anyhow!("file read task error: {error}"))?;
+
+    let document = match document_opt {
+        Ok(Some(doc)) => doc,
+        Ok(None) | Err(_) => return Ok(vec![]),
+    };
+
+    let chunk_inputs = chunk_document(
+        &document.path,
+        &document.content,
+        config.chunk_line_limit,
+        config.chunk_char_limit,
+    );
+
+    if chunk_inputs.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let embeddings = embedder
+        .embed_texts(
+            chunk_inputs
+                .iter()
+                .map(|chunk| format!("passage: {}", chunk.content))
+                .collect(),
+        )
+        .await?;
+
+    Ok(chunk_inputs
+        .into_iter()
+        .zip(embeddings)
+        .map(|(chunk, embedding)| Chunk {
+            file_path: chunk.file_path,
+            content: chunk.content,
+            embedding,
+        })
+        .collect())
 }
 
 #[derive(Debug, Clone)]
