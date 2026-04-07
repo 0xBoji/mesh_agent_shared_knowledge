@@ -208,4 +208,4 @@ Please refer to `AGENTS.md` for our strict, local project lore and Git commit st
 - [x] Strict JSON output purity tests
 - [x] Adaptive chunking sizes via CLI (`--chunk-lines 40`)
 - [x] File extension filtering (`--extensions "rs,md"`)
-- [ ] Continuous hot-reloading (re-indexing files if they change on disk)
+- [x] Continuous hot-reloading (re-indexing files if they change on disk)
