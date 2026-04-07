@@ -13,10 +13,22 @@ MASK operates in two modes:
 
 ## Installation
 
-Assuming you have Rust installed locally:
+When the crate is published, the standard Cargo install path is:
 
 ```bash
-cargo install --path .
+cargo install mesh_agent_shared_knowledge --bin mask
+```
+
+If you prefer a curl/bash installer:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/0xBoji/mesh_agent_shared_knowledge/main/scripts/install.sh)
+```
+
+If you already have the repo checked out locally:
+
+```bash
+cargo install --path . --bin mask
 ```
 
 *Note: MASK requires the `coding_agent_mesh_presence` crate to be available in the workspace or resolving environment to utilize the LAN mesh discovery.*
