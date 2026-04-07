@@ -1,0 +1,28 @@
+[package]
+name = "mesh_agent_shared_knowledge"
+version = "0.1.0"
+edition = "2024"
+description = "MASK (mask): the RAG/shared intelligence layer for the Rust Agent Infrastructure ecosystem"
+license = "MIT"
+rust-version = "1.85"
+
+[[bin]]
+name = "mask"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0.102"
+axum = "0.8.8"
+clap = { version = "4.6.0", features = ["derive"] }
+coding_agent_mesh_presence = { version = "0.1.6", path = "../coding_agent_mesh_presence" }
+fastembed = "5.13.1"
+reqwest = { version = "0.13.2", default-features = false, features = ["json"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+tokio = { version = "1.51.0", features = ["fs", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+
+[lints.clippy]
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unwrap_used = "deny"
