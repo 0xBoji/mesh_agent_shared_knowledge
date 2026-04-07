@@ -5,7 +5,17 @@ edition = "2024"
 description = "MASK (mask): the RAG/shared intelligence layer for the Rust Agent Infrastructure ecosystem"
 license = "MIT"
 rust-version = "1.85"
-
+readme = "README.md"
+keywords = ["rag", "ai", "agent", "mdns", "vector-db"]
+categories = ["command-line-utilities", "development-tools"]
+include = [
+    "/Cargo.toml",
+    "/Cargo.lock",
+    "/README.md",
+    "/docs/SPEC.md",
+    "/src/**/*.rs",
+    "/tests/**/*.rs",
+]
 [[bin]]
 name = "mask"
 path = "src/main.rs"
