@@ -206,6 +206,6 @@ Please refer to `AGENTS.md` for our strict, local project lore and Git commit st
 - [x] Cosine similarity ranking
 - [x] ZeroConfMesh / CAMP mDNS announcement
 - [x] Strict JSON output purity tests
-- [ ] Adaptive chunking sizes via CLI (`--chunk-size 500`)
-- [ ] File extension filtering (`--include "*.rs,*.md"`)
+- [x] Adaptive chunking sizes via CLI (`--chunk-lines 40`)
+- [x] File extension filtering (`--extensions "rs,md"`)
 - [ ] Continuous hot-reloading (re-indexing files if they change on disk)
